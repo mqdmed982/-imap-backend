@@ -1,4 +1,4 @@
-import { useState, useEffect, useCallback } from 'react';
+import { useState, useEffect, useCallback, useRef } from 'react';
 
 const API = process.env.REACT_APP_API_URL || '';
 
@@ -6,11 +6,14 @@ export function useEmails(filter, search) {
   const [accounts, setAccounts] = useState([]);
   const [stats, setStats] = useState(null);
   const [loading, setLoading] = useState(true);
+  const [polling, setPolling] = useState(false);
   const [error, setError] = useState(null);
   const [lastUpdated, setLastUpdated] = useState(null);
+  const intervalRef = useRef(null);
 
-  const fetchData = useCallback(async () => {
+  const fetchData = useCallback(async (showLoader = false) => {
     try {
+      if (showLoader) setLoading(true);
       const params = new URLSearchParams();
       if (filter && filter !== 'all') params.set('filter', filter);
       if (search) params.set('search', search);
@@ -39,20 +42,26 @@ export function useEmails(filter, search) {
   }, [filter, search]);
 
   useEffect(() => {
-    setLoading(true);
-    fetchData();
+    fetchData(true);
   }, [fetchData]);
 
-  // Auto-refresh every 30 seconds
   useEffect(() => {
-    const interval = setInterval(fetchData, 30000);
-    return () => clearInterval(interval);
+    intervalRef.current = setInterval(() => fetchData(false), 30000);
+    return () => clearInterval(intervalRef.current);
   }, [fetchData]);
 
   const triggerPoll = async () => {
-    await fetch(`${API}/api/poll`, { method: 'POST' });
-    setTimeout(fetchData, 2000);
+    setPolling(true);
+    try {
+      await fetch(`${API}/api/poll`, { method: 'POST' });
+      await new Promise(r => setTimeout(r, 3000));
+      await fetchData(false);
+    } catch (err) {
+      setError(err.message);
+    } finally {
+      setPolling(false);
+    }
   };
 
-  return { accounts, stats, loading, error, lastUpdated, triggerPoll, refresh: fetchData };
+  return { accounts, stats, loading, polling, error, lastUpdated, triggerPoll, refresh: fetchData };
 }
