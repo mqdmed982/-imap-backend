@@ -133,3 +133,35 @@ router.post('/poll', async (req, res) => {
 });
 
 module.exports = router;
+
+// GET /api/emails/:id — full email detail with html + raw source
+router.get('/emails/:id', async (req, res) => {
+  try {
+    const { rows } = await pool.query(
+      `SELECT e.*, a.name as account_name, a.email as account_email
+       FROM emails e
+       JOIN accounts a ON a.id = e.account_id
+       WHERE e.id = $1`,
+      [req.params.id]
+    );
+    if (rows.length === 0) return res.status(404).json({ error: 'Not found' });
+    const e = rows[0];
+    res.json({
+      id: e.id,
+      subject: e.subject,
+      senderName: e.sender_name,
+      senderAddress: e.sender_address,
+      date: e.date,
+      folder: e.folder,
+      isSpam: e.is_spam,
+      labels: e.labels,
+      accountName: e.account_name,
+      accountEmail: e.account_email,
+      htmlBody: e.html_body,
+      textBody: e.text_body,
+      rawSource: e.raw_source,
+    });
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
