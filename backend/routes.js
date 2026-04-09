@@ -3,7 +3,6 @@ const { pool } = require('./db');
 const { pollAllAccounts } = require('./imap');
 const router = express.Router();
 
-// GET /api/accounts — list all monitored accounts
 router.get('/accounts', async (req, res) => {
   try {
     const { rows } = await pool.query(
@@ -15,24 +14,10 @@ router.get('/accounts', async (req, res) => {
   }
 });
 
-// GET /api/emails — all emails, grouped by account
 router.get('/emails', async (req, res) => {
   try {
     const { filter, search } = req.query;
-
-    let where = 'WHERE 1=1';
-    const params = [];
-
-    if (filter === 'inbox') {
-      where += ` AND e.is_spam = FALSE`;
-    } else if (filter === 'spam') {
-      where += ` AND e.is_spam = TRUE`;
-    }
-
-    if (search) {
-      params.push(`%${search}%`);
-      where += ` AND (e.subject ILIKE $${params.length} OR e.sender_name ILIKE $${params.length} OR e.sender_address ILIKE $${params.length})`;
-    }
+    const searchParam = search ? `%${search}%` : null;
 
     const { rows: accounts } = await pool.query(
       `SELECT id, name, email FROM accounts ORDER BY created_at ASC`
@@ -40,17 +25,49 @@ router.get('/emails', async (req, res) => {
 
     const result = [];
     for (const acc of accounts) {
-      const { rows: emails } = await pool.query(
-        `SELECT
-           e.id, e.uid, e.sender_name, e.sender_address,
-           e.subject, e.date, e.folder, e.is_spam, e.labels, e.fetched_at
-         FROM emails e
-         ${where}
-           AND e.account_id = $${params.length + 1}
-         ORDER BY e.fetched_at DESC
-         LIMIT 20`,
-        [...params, acc.id]
-      );
+      let emails = [];
+
+      if (!filter || filter === 'all') {
+        const searchClause = searchParam
+          ? `AND (e.subject ILIKE $2 OR e.sender_name ILIKE $2 OR e.sender_address ILIKE $2)`
+          : '';
+        const [inboxRows, spamRows] = await Promise.all([
+          pool.query(
+            `SELECT e.id, e.uid, e.sender_name, e.sender_address,
+                    e.subject, e.date, e.folder, e.is_spam, e.labels, e.fetched_at
+             FROM emails e
+             WHERE e.is_spam = FALSE AND e.account_id = $1 ${searchClause}
+             ORDER BY e.date DESC NULLS LAST LIMIT 10`,
+            searchParam ? [acc.id, searchParam] : [acc.id]
+          ),
+          pool.query(
+            `SELECT e.id, e.uid, e.sender_name, e.sender_address,
+                    e.subject, e.date, e.folder, e.is_spam, e.labels, e.fetched_at
+             FROM emails e
+             WHERE e.is_spam = TRUE AND e.account_id = $1 ${searchClause}
+             ORDER BY e.date DESC NULLS LAST LIMIT 10`,
+            searchParam ? [acc.id, searchParam] : [acc.id]
+          ),
+        ]);
+        emails = [...inboxRows.rows, ...spamRows.rows].sort(
+          (a, b) => new Date(b.date || b.fetched_at) - new Date(a.date || a.fetched_at)
+        );
+      } else {
+        const isSpam = filter === 'spam';
+        const searchClause = searchParam
+          ? `AND (e.subject ILIKE $3 OR e.sender_name ILIKE $3 OR e.sender_address ILIKE $3)`
+          : '';
+        const { rows } = await pool.query(
+          `SELECT e.id, e.uid, e.sender_name, e.sender_address,
+                  e.subject, e.date, e.folder, e.is_spam, e.labels, e.fetched_at
+           FROM emails e
+           WHERE e.is_spam = $1 AND e.account_id = $2 ${searchClause}
+           ORDER BY e.date DESC NULLS LAST LIMIT 20`,
+          searchParam ? [isSpam, acc.id, searchParam] : [isSpam, acc.id]
+        );
+        emails = rows;
+      }
+
       result.push({
         account: { id: acc.id, name: acc.name, email: acc.email },
         emails: emails.map((e) => ({
@@ -73,7 +90,6 @@ router.get('/emails', async (req, res) => {
   }
 });
 
-// GET /api/stats — inbox/spam counts per provider
 router.get('/stats', async (req, res) => {
   try {
     const { rows } = await pool.query(`
@@ -111,7 +127,6 @@ router.get('/stats', async (req, res) => {
   }
 });
 
-// POST /api/poll — manually trigger a poll
 router.post('/poll', async (req, res) => {
   res.json({ message: 'Poll started' });
   pollAllAccounts().catch(console.error);
