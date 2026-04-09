@@ -18,7 +18,6 @@ async function initDB() {
         password TEXT NOT NULL,
         created_at TIMESTAMP DEFAULT NOW()
       );
-
       CREATE TABLE IF NOT EXISTS emails (
         id SERIAL PRIMARY KEY,
         account_id INTEGER REFERENCES accounts(id) ON DELETE CASCADE,
@@ -31,15 +30,20 @@ async function initDB() {
         folder VARCHAR(50) DEFAULT 'INBOX',
         is_spam BOOLEAN DEFAULT FALSE,
         labels TEXT[] DEFAULT '{}',
+        raw_source TEXT,
+        html_body TEXT,
+        text_body TEXT,
         raw_headers TEXT,
         fetched_at TIMESTAMP DEFAULT NOW(),
         UNIQUE(account_id, uid, folder)
       );
-
       CREATE INDEX IF NOT EXISTS idx_emails_account_id ON emails(account_id);
       CREATE INDEX IF NOT EXISTS idx_emails_date ON emails(date DESC);
       CREATE INDEX IF NOT EXISTS idx_emails_is_spam ON emails(is_spam);
     `);
+    await client.query(`ALTER TABLE emails ADD COLUMN IF NOT EXISTS raw_source TEXT`);
+    await client.query(`ALTER TABLE emails ADD COLUMN IF NOT EXISTS html_body TEXT`);
+    await client.query(`ALTER TABLE emails ADD COLUMN IF NOT EXISTS text_body TEXT`);
     console.log('[DB] Tables ready');
   } finally {
     client.release();
