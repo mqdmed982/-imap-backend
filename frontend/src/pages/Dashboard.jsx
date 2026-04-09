@@ -1,4 +1,5 @@
 import React, { useState } from 'react';
+import { EmailViewer } from '../components/EmailViewer';
 import { DonutChart } from '../components/DonutChart';
 import { AccountPanel } from '../components/AccountPanel';
 import { useEmails } from '../hooks/useEmails';
@@ -12,6 +13,7 @@ const PROVIDER_COLORS = {
 
 export default function Dashboard() {
   const [filter, setFilter] = useState('all');
+  const [selectedEmailId, setSelectedEmailId] = useState(null);
   const [search, setSearch] = useState('');
   const [searchInput, setSearchInput] = useState('');
 
@@ -193,6 +195,7 @@ export default function Dashboard() {
                 key={item.account.id}
                 account={item.account}
                 emails={item.emails}
+                onEmailClick={setSelectedEmailId}
               />
             ))}
             {accounts.length === 0 && !error && (
@@ -203,6 +206,13 @@ export default function Dashboard() {
           </div>
         )}
       </div>
+
+      {selectedEmailId && (
+        <EmailViewer
+          emailId={selectedEmailId}
+          onClose={() => setSelectedEmailId(null)}
+        />
+      )}
     </div>
   );
 }
