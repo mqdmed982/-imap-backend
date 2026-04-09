@@ -15,7 +15,7 @@ export default function Dashboard() {
   const [search, setSearch] = useState('');
   const [searchInput, setSearchInput] = useState('');
 
-  const { accounts, stats, loading, error, lastUpdated, triggerPoll } = useEmails(filter, search);
+  const { accounts, stats, loading, polling, error, lastUpdated, triggerPoll } = useEmails(filter, search);
 
   const handleSearch = (e) => {
     e.preventDefault();
@@ -66,13 +66,15 @@ export default function Dashboard() {
         <div style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
           <button
             onClick={triggerPoll}
+            disabled={polling}
             style={{
-              padding: '6px 14px', background: 'transparent',
+              padding: '6px 14px', background: polling ? '#1e3a5f' : 'transparent',
               border: '0.5px solid #475569', borderRadius: 8,
-              color: '#94a3b8', fontSize: 12, cursor: 'pointer',
+              color: polling ? '#60a5fa' : '#94a3b8', fontSize: 12, cursor: polling ? 'not-allowed' : 'pointer',
+              transition: 'all 0.2s',
             }}
           >
-            ↻ Poll now
+            {polling ? '⏳ Polling...' : '↻ Poll now'}
           </button>
           {lastUpdated && (
             <span style={{ fontSize: 11, color: '#475569' }}>
