@@ -1,0 +1,22 @@
+{
+  "name": "inboxious-backend",
+  "version": "1.0.0",
+  "description": "Inboxious IMAP email monitoring backend",
+  "main": "server.js",
+  "scripts": {
+    "start": "node server.js",
+    "dev": "nodemon server.js"
+  },
+  "dependencies": {
+    "cors": "^2.8.5",
+    "dotenv": "^16.4.5",
+    "express": "^4.19.2",
+    "imap": "^0.8.19",
+    "mailparser": "^3.7.1",
+    "node-cron": "^3.0.3",
+    "pg": "^8.11.5"
+  },
+  "devDependencies": {
+    "nodemon": "^3.1.0"
+  }
+}
