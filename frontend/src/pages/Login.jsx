@@ -14,7 +14,7 @@ export default function Login({ onLogin }) {
     // Small artificial delay so it feels like a real check
     await new Promise((r) => setTimeout(r, 500));
 
-    const correctPassword = process.env.REACT_APP_DASHBOARD_PASSWORD || 'inboxious2024';
+    const correctPassword = process.env.REACT_APP_DASHBOARD_PASSWORD;
 
     if (password === correctPassword) {
       sessionStorage.setItem('inboxious_auth', '1');
