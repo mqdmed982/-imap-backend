@@ -1,6 +1,6 @@
 const express = require('express');
 const { pool } = require('./db');
-const { pollAllAccounts } = require('./imap');
+const { pollAllAccounts, deleteEmailFromImap } = require('./imap');
 const router = express.Router();
 
 router.get('/accounts', async (req, res) => {
@@ -130,6 +130,35 @@ router.get('/stats', async (req, res) => {
 router.post('/poll', async (req, res) => {
   res.json({ message: 'Poll started' });
   pollAllAccounts().catch(console.error);
+});
+
+
+// DELETE /api/emails/:id — delete from DB and Gmail via IMAP
+router.delete('/emails/:id', async (req, res) => {
+  try {
+    const { rows } = await pool.query(
+      'SELECT id, account_id, uid, folder FROM emails WHERE id = $1',
+      [req.params.id]
+    );
+    if (rows.length === 0) return res.status(404).json({ error: 'Not found' });
+
+    const email = rows[0];
+
+    // Delete from Gmail via IMAP
+    try {
+      await deleteEmailFromImap(email.id, email.uid, email.folder);
+    } catch (imapErr) {
+      console.error('[IMAP] Delete failed:', imapErr.message);
+      // Still delete from DB even if IMAP fails
+    }
+
+    // Delete from DB
+    await pool.query('DELETE FROM emails WHERE id = $1', [req.params.id]);
+
+    res.json({ success: true, id: req.params.id });
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
 });
 
 module.exports = router;
