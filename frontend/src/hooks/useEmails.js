@@ -10,10 +10,19 @@ export function useEmails(filter, search) {
   const [error, setError] = useState(null);
   const [lastUpdated, setLastUpdated] = useState(null);
   const intervalRef = useRef(null);
+  const cacheRef = useRef({});
 
   const fetchData = useCallback(async (showLoader = false) => {
+    const cacheKey = `${filter}__${search}`;
     try {
-      if (showLoader) setLoading(true);
+      // Show cached data instantly while fetching fresh
+      if (cacheRef.current[cacheKey] && !showLoader) {
+        setAccounts(cacheRef.current[cacheKey].accounts);
+        setStats(cacheRef.current[cacheKey].stats);
+      } else if (showLoader) {
+        setLoading(true);
+      }
+
       const params = new URLSearchParams();
       if (filter && filter !== 'all') params.set('filter', filter);
       if (search) params.set('search', search);
@@ -30,6 +39,9 @@ export function useEmails(filter, search) {
         statsRes.json(),
       ]);
 
+      // Update cache
+      cacheRef.current[cacheKey] = { accounts: emailsData, stats: statsData };
+
       setAccounts(emailsData);
       setStats(statsData);
       setLastUpdated(new Date());
@@ -45,8 +57,9 @@ export function useEmails(filter, search) {
     fetchData(true);
   }, [fetchData]);
 
+  // Auto-refresh every 60 seconds (matches backend poll interval)
   useEffect(() => {
-    intervalRef.current = setInterval(() => fetchData(false), 30000);
+    intervalRef.current = setInterval(() => fetchData(false), 60000);
     return () => clearInterval(intervalRef.current);
   }, [fetchData]);
 
@@ -54,7 +67,8 @@ export function useEmails(filter, search) {
     setPolling(true);
     try {
       await fetch(`${API}/api/poll`, { method: 'POST' });
-      await new Promise(r => setTimeout(r, 3000));
+      // Wait for backend to finish fetching
+      await new Promise(r => setTimeout(r, 5000));
       await fetchData(false);
     } catch (err) {
       setError(err.message);
