@@ -158,4 +158,48 @@ async function pollAllAccounts() {
   }
 }
 
-module.exports = { pollAllAccounts, getAccountsFromEnv };
+
+async function deleteEmailFromImap(accountId, emailUid, folder) {
+  const { rows } = await pool.query(
+    `SELECT a.email, a.password, a.host, a.port
+     FROM accounts a
+     JOIN emails e ON e.account_id = a.id
+     WHERE e.id = $1`,
+    [accountId]
+  );
+  if (rows.length === 0) throw new Error('Account not found');
+  const config = rows[0];
+
+  return new Promise((resolve, reject) => {
+    const imap = new Imap({
+      user: config.email,
+      password: config.password,
+      host: config.host,
+      port: config.port,
+      tls: true,
+      tlsOptions: { rejectUnauthorized: false },
+      authTimeout: 10000,
+    });
+
+    imap.once('ready', () => {
+      imap.openBox(folder, false, (err) => {
+        if (err) { imap.end(); return reject(err); }
+
+        imap.seq.addFlags(emailUid, '\\Deleted', (err) => {
+          if (err) { imap.end(); return reject(err); }
+
+          imap.expunge((err) => {
+            imap.end();
+            if (err) return reject(err);
+            resolve();
+          });
+        });
+      });
+    });
+
+    imap.once('error', (err) => reject(err));
+    imap.connect();
+  });
+}
+
+module.exports = { pollAllAccounts, getAccountsFromEnv, deleteEmailFromImap };
