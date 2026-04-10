@@ -11,9 +11,15 @@ const PROVIDER_COLORS = {
   others: '#888780',
 };
 
-export default function Dashboard() {
+export default function Dashboard({ onLogout }) {
   const [filter, setFilter] = useState('all');
   const [selectedEmailId, setSelectedEmailId] = useState(null);
+  const [deletedIds, setDeletedIds] = useState(new Set());
+
+  const handleDeleted = (id) => {
+    setDeletedIds(prev => new Set([...prev, id]));
+    setSelectedEmailId(null);
+  };
   const [search, setSearch] = useState('');
   const [searchInput, setSearchInput] = useState('');
 
@@ -83,6 +89,19 @@ export default function Dashboard() {
               Updated {lastUpdated.toLocaleTimeString()}
             </span>
           )}
+          <button
+            onClick={onLogout}
+            style={{
+              padding: '6px 14px', background: 'transparent',
+              border: '0.5px solid #334155', borderRadius: 8,
+              color: '#64748b', fontSize: 12, cursor: 'pointer',
+              transition: 'all 0.2s',
+            }}
+            onMouseEnter={e => { e.currentTarget.style.color = '#f87171'; e.currentTarget.style.borderColor = '#ef4444'; }}
+            onMouseLeave={e => { e.currentTarget.style.color = '#64748b'; e.currentTarget.style.borderColor = '#334155'; }}
+          >
+            ⎋ Logout
+          </button>
         </div>
       </div>
 
@@ -194,7 +213,7 @@ export default function Dashboard() {
               <AccountPanel
                 key={item.account.id}
                 account={item.account}
-                emails={item.emails}
+                emails={item.emails.filter(e => !deletedIds.has(e.id))}
                 onEmailClick={setSelectedEmailId}
               />
             ))}
@@ -211,6 +230,7 @@ export default function Dashboard() {
         <EmailViewer
           emailId={selectedEmailId}
           onClose={() => setSelectedEmailId(null)}
+          onDeleted={handleDeleted}
         />
       )}
     </div>
