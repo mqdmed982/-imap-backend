@@ -10,27 +10,23 @@ export function useEmails(filter, search) {
   const [error, setError] = useState(null);
   const [lastUpdated, setLastUpdated] = useState(null);
   const intervalRef = useRef(null);
-  const cacheRef = useRef({});
+  const hasDataRef = useRef(false);
 
   const fetchData = useCallback(async (showLoader = false) => {
-    const cacheKey = `${filter}__${search}`;
     try {
-      // Show cached data instantly while fetching fresh
-      if (cacheRef.current[cacheKey] && !showLoader) {
-        setAccounts(cacheRef.current[cacheKey].accounts);
-        setStats(cacheRef.current[cacheKey].stats);
-      } else if (showLoader) {
-        setLoading(true);
-      }
-
+      if (showLoader && !hasDataRef.current) setLoading(true);
       const params = new URLSearchParams();
       if (filter && filter !== 'all') params.set('filter', filter);
       if (search) params.set('search', search);
 
+      const controller = new AbortController();
+      const timeout = setTimeout(() => controller.abort(), 15000);
+
       const [emailsRes, statsRes] = await Promise.all([
-        fetch(`${API}/api/emails?${params}`),
-        fetch(`${API}/api/stats`),
+        fetch(`${API}/api/emails?${params}`, { signal: controller.signal }),
+        fetch(`${API}/api/stats`, { signal: controller.signal }),
       ]);
+      clearTimeout(timeout);
 
       if (!emailsRes.ok || !statsRes.ok) throw new Error('API error');
 
@@ -39,25 +35,32 @@ export function useEmails(filter, search) {
         statsRes.json(),
       ]);
 
-      // Update cache
-      cacheRef.current[cacheKey] = { accounts: emailsData, stats: statsData };
-
       setAccounts(emailsData);
       setStats(statsData);
       setLastUpdated(new Date());
       setError(null);
+      hasDataRef.current = true;
     } catch (err) {
-      setError(err.message);
+      if (err.name === 'AbortError') {
+        console.warn('[useEmails] Request timed out');
+        // Don't show error if we already have data
+        if (!hasDataRef.current) setError('Request timed out. Retrying...');
+      } else {
+        // Only show error banner if we have no data yet
+        if (!hasDataRef.current) setError(err.message);
+        else console.warn('[useEmails] Background refresh failed:', err.message);
+      }
     } finally {
       setLoading(false);
     }
   }, [filter, search]);
 
   useEffect(() => {
+    hasDataRef.current = false;
     fetchData(true);
   }, [fetchData]);
 
-  // Auto-refresh every 60 seconds (matches backend poll interval)
+  // Auto-refresh every 60 seconds
   useEffect(() => {
     intervalRef.current = setInterval(() => fetchData(false), 60000);
     return () => clearInterval(intervalRef.current);
@@ -71,7 +74,7 @@ export function useEmails(filter, search) {
       await new Promise(r => setTimeout(r, 5000));
       await fetchData(false);
     } catch (err) {
-      setError(err.message);
+      if (!hasDataRef.current) setError(err.message);
     } finally {
       setPolling(false);
     }
