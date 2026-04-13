@@ -11,7 +11,7 @@ const PROVIDER_COLORS = {
   others: '#888780',
 };
 
-export default function Dashboard({ onLogout }) {
+export default function Dashboard() {
   const [filter, setFilter] = useState('all');
   const [selectedEmailId, setSelectedEmailId] = useState(null);
   const [deletedIds, setDeletedIds] = useState(new Set());
@@ -89,19 +89,6 @@ export default function Dashboard({ onLogout }) {
               Updated {lastUpdated.toLocaleTimeString()}
             </span>
           )}
-          <button
-            onClick={onLogout}
-            style={{
-              padding: '6px 14px', background: 'transparent',
-              border: '0.5px solid #334155', borderRadius: 8,
-              color: '#64748b', fontSize: 12, cursor: 'pointer',
-              transition: 'all 0.2s',
-            }}
-            onMouseEnter={e => { e.currentTarget.style.color = '#f87171'; e.currentTarget.style.borderColor = '#ef4444'; }}
-            onMouseLeave={e => { e.currentTarget.style.color = '#64748b'; e.currentTarget.style.borderColor = '#334155'; }}
-          >
-            ⎋ Logout
-          </button>
         </div>
       </div>
 
@@ -186,7 +173,7 @@ export default function Dashboard({ onLogout }) {
         </div>
 
         {/* Error */}
-        {error && (
+        {error && accounts.length === 0 && (
           <div style={{
             background: '#7f1d1d', color: '#fca5a5', padding: '10px 16px',
             borderRadius: 8, fontSize: 13, marginBottom: 14,
