@@ -1,4 +1,4 @@
-import React, { useState } from 'react';
+import React, { useState, useMemo, useCallback, useRef } from 'react';
 import { EmailViewer } from '../components/EmailViewer';
 import { DonutChart } from '../components/DonutChart';
 import { AccountPanel } from '../components/AccountPanel';
@@ -11,30 +11,69 @@ const PROVIDER_COLORS = {
   others: '#888780',
 };
 
+// Simple debounce hook
+function useDebounce(value, delay) {
+  const [debounced, setDebounced] = useState(value);
+  const timerRef = useRef(null);
+  const set = useCallback((val) => {
+    clearTimeout(timerRef.current);
+    timerRef.current = setTimeout(() => setDebounced(val), delay);
+  }, [delay]);
+  return [debounced, set];
+}
+
 export default function Dashboard() {
   const [filter, setFilter] = useState('all');
   const [selectedEmailId, setSelectedEmailId] = useState(null);
   const [deletedIds, setDeletedIds] = useState(new Set());
+  const [searchInput, setSearchInput] = useState('');
+  const [debouncedSearch, setDebouncedSearch] = useDebounce('', 400);
 
-  const handleDeleted = (id) => {
+  const handleDeleted = useCallback((id) => {
     setDeletedIds(prev => new Set([...prev, id]));
     setSelectedEmailId(null);
-  };
-  const [search, setSearch] = useState('');
-  const [searchInput, setSearchInput] = useState('');
+  }, []);
 
-  const { accounts, stats, loading, polling, error, lastUpdated, triggerPoll } = useEmails(filter, search);
+  const { accounts, stats, loading, polling, error, lastUpdated, triggerPoll } = useEmails(filter, debouncedSearch);
 
-  const handleSearch = (e) => {
+  const handleSearchChange = useCallback((e) => {
+    setSearchInput(e.target.value);
+    setDebouncedSearch(e.target.value);
+  }, [setDebouncedSearch]);
+
+  const handleSearchSubmit = useCallback((e) => {
     e.preventDefault();
-    setSearch(searchInput);
-  };
+    setDebouncedSearch(searchInput);
+  }, [searchInput, setDebouncedSearch]);
 
-  const totalEmails = stats?.total || 0;
-  const gmailPct = totalEmails > 0 ? Math.round((stats?.byAccount?.filter(a => a.email.includes('gmail')).reduce((s, a) => s + a.inbox + a.spam, 0) / totalEmails) * 100) : 0;
-  const outlookPct = totalEmails > 0 ? Math.round((stats?.byAccount?.filter(a => a.email.includes('outlook') || a.email.includes('hotmail')).reduce((s, a) => s + a.inbox + a.spam, 0) / totalEmails) * 100) : 0;
-  const yahooPct = totalEmails > 0 ? Math.round((stats?.byAccount?.filter(a => a.email.includes('yahoo') || a.email.includes('att')).reduce((s, a) => s + a.inbox + a.spam, 0) / totalEmails) * 100) : 0;
-  const othersPct = Math.max(0, 100 - gmailPct - outlookPct - yahooPct);
+  // Memoize expensive provider % calculations
+  const providerStats = useMemo(() => {
+    const total = stats?.total || 0;
+    if (total === 0) return { gmailPct: 0, outlookPct: 0, yahooPct: 0, othersPct: 100 };
+
+    const byAccount = stats?.byAccount || [];
+    const sum = (filter) => byAccount
+      .filter(filter)
+      .reduce((s, a) => s + a.inbox + a.spam, 0);
+
+    const gmailPct = Math.round((sum(a => a.email.includes('gmail')) / total) * 100);
+    const outlookPct = Math.round((sum(a => a.email.includes('outlook') || a.email.includes('hotmail')) / total) * 100);
+    const yahooPct = Math.round((sum(a => a.email.includes('yahoo') || a.email.includes('att')) / total) * 100);
+    const othersPct = Math.max(0, 100 - gmailPct - outlookPct - yahooPct);
+
+    return { gmailPct, outlookPct, yahooPct, othersPct };
+  }, [stats]);
+
+  // Memoize filtered account list to avoid re-filtering on every render
+  const filteredAccounts = useMemo(() =>
+    accounts.map(item => ({
+      ...item,
+      emails: item.emails.filter(e => !deletedIds.has(e.id)),
+    })),
+    [accounts, deletedIds]
+  );
+
+  const { gmailPct, outlookPct, yahooPct, othersPct } = providerStats;
 
   return (
     <div style={{ minHeight: '100vh', background: '#0f172a', fontFamily: 'Inter, system-ui, sans-serif' }}>
@@ -54,10 +93,10 @@ export default function Dashboard() {
           <span style={{ fontSize: 16, fontWeight: 600, color: '#f1f5f9' }}>Inboxious</span>
         </div>
 
-        <form onSubmit={handleSearch} style={{ flex: 1, maxWidth: 480, display: 'flex', gap: 8 }}>
+        <form onSubmit={handleSearchSubmit} style={{ flex: 1, maxWidth: 480, display: 'flex', gap: 8 }}>
           <input
             value={searchInput}
-            onChange={e => setSearchInput(e.target.value)}
+            onChange={handleSearchChange}
             placeholder="Search subject, sender..."
             style={{
               flex: 1, padding: '7px 14px', borderRadius: 8,
@@ -196,15 +235,15 @@ export default function Dashboard() {
             gridTemplateColumns: 'repeat(auto-fill, minmax(460px, 1fr))',
             gap: 14,
           }}>
-            {accounts.map((item) => (
+            {filteredAccounts.map((item) => (
               <AccountPanel
                 key={item.account.id}
                 account={item.account}
-                emails={item.emails.filter(e => !deletedIds.has(e.id))}
+                emails={item.emails}
                 onEmailClick={setSelectedEmailId}
               />
             ))}
-            {accounts.length === 0 && !error && (
+            {filteredAccounts.length === 0 && !error && (
               <div style={{ color: '#475569', fontSize: 13, gridColumn: '1/-1', textAlign: 'center', padding: '40px 0' }}>
                 No accounts configured. Add ACCOUNT_1_EMAIL etc. to your .env file.
               </div>
