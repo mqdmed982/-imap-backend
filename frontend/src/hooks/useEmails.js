@@ -1,6 +1,7 @@
 import { useState, useEffect, useCallback, useRef } from 'react';
 
 const API = process.env.REACT_APP_API_URL || '';
+const REFRESH_INTERVAL = 60000; // 60s auto-refresh
 
 export function useEmails(filter, search) {
   const [accounts, setAccounts] = useState([]);
@@ -11,15 +12,21 @@ export function useEmails(filter, search) {
   const [lastUpdated, setLastUpdated] = useState(null);
   const intervalRef = useRef(null);
   const hasDataRef = useRef(false);
+  const abortRef = useRef(null);
 
   const fetchData = useCallback(async (showLoader = false) => {
+    // Cancel any in-flight request
+    if (abortRef.current) abortRef.current.abort();
+    const controller = new AbortController();
+    abortRef.current = controller;
+
     try {
       if (showLoader && !hasDataRef.current) setLoading(true);
+
       const params = new URLSearchParams();
       if (filter && filter !== 'all') params.set('filter', filter);
       if (search) params.set('search', search);
 
-      const controller = new AbortController();
       const timeout = setTimeout(() => controller.abort(), 15000);
 
       const [emailsRes, statsRes] = await Promise.all([
@@ -42,11 +49,9 @@ export function useEmails(filter, search) {
       hasDataRef.current = true;
     } catch (err) {
       if (err.name === 'AbortError') {
-        console.warn('[useEmails] Request timed out');
-        // Don't show error if we already have data
+        console.warn('[useEmails] Request cancelled or timed out');
         if (!hasDataRef.current) setError('Request timed out. Retrying...');
       } else {
-        // Only show error banner if we have no data yet
         if (!hasDataRef.current) setError(err.message);
         else console.warn('[useEmails] Background refresh failed:', err.message);
       }
@@ -55,23 +60,27 @@ export function useEmails(filter, search) {
     }
   }, [filter, search]);
 
+  // Reset + re-fetch when filter/search changes
   useEffect(() => {
     hasDataRef.current = false;
     fetchData(true);
   }, [fetchData]);
 
-  // Auto-refresh every 60 seconds
+  // Auto-refresh every 60s
   useEffect(() => {
-    intervalRef.current = setInterval(() => fetchData(false), 60000);
-    return () => clearInterval(intervalRef.current);
+    intervalRef.current = setInterval(() => fetchData(false), REFRESH_INTERVAL);
+    return () => {
+      clearInterval(intervalRef.current);
+      if (abortRef.current) abortRef.current.abort();
+    };
   }, [fetchData]);
 
   const triggerPoll = async () => {
     setPolling(true);
     try {
       await fetch(`${API}/api/poll`, { method: 'POST' });
-      // Wait for backend to finish fetching
-      await new Promise(r => setTimeout(r, 5000));
+      // Wait for backend IMAP fetch to complete (accounts × ~3s each)
+      await new Promise(r => setTimeout(r, 8000));
       await fetchData(false);
     } catch (err) {
       if (!hasDataRef.current) setError(err.message);
