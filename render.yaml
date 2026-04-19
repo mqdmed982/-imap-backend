@@ -17,7 +17,7 @@ services:
       - key: FRONTEND_URL
         value: https://inboxious-frontend.onrender.com
       - key: POLL_INTERVAL
-        value: "120"  # 120s — backend enforces 60s minimum; 120s is safer for Gmail rate limits
+        value: "55"  # 120s — backend enforces 60s minimum; 120s is safer for Gmail rate limits
       # Add your account env vars in the Render dashboard (not here)
       # ACCOUNT_1_NAME, ACCOUNT_1_EMAIL, ACCOUNT_1_PASSWORD, etc.
 
