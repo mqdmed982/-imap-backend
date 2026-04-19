@@ -6,6 +6,7 @@ services:
     rootDir: backend
     buildCommand: npm install
     startCommand: node server.js
+    healthCheckPath: /health
     envVars:
       - key: NODE_ENV
         value: production
@@ -16,7 +17,7 @@ services:
       - key: FRONTEND_URL
         value: https://inboxious-frontend.onrender.com
       - key: POLL_INTERVAL
-        value: "30"
+        value: "120"  # 120s — backend enforces 60s minimum; 120s is safer for Gmail rate limits
       # Add your account env vars in the Render dashboard (not here)
       # ACCOUNT_1_NAME, ACCOUNT_1_EMAIL, ACCOUNT_1_PASSWORD, etc.
 
@@ -27,7 +28,7 @@ services:
     rootDir: frontend
     buildCommand: npm install && npm run build
     staticPublishPath: build
-    envVars:  
+    envVars:
       - key: REACT_APP_API_URL
         value: https://inboxious-backend.onrender.com
     routes:
