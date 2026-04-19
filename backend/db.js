@@ -3,9 +3,10 @@ const { Pool } = require('pg');
 const pool = new Pool({
   connectionString: process.env.DATABASE_URL,
   ssl: process.env.NODE_ENV === 'production' ? { rejectUnauthorized: false } : false,
-  max: 5,
+  max: 10,
   idleTimeoutMillis: 30000,
   connectionTimeoutMillis: 5000,
+  statement_timeout: 10000, // kill runaway queries after 10s
 });
 
 async function initDB() {
@@ -51,17 +52,22 @@ async function initDB() {
     await client.query(`CREATE INDEX IF NOT EXISTS idx_emails_account_spam ON emails(account_id, is_spam, date DESC)`);
     await client.query(`CREATE INDEX IF NOT EXISTS idx_emails_date ON emails(date DESC)`);
     await client.query(`CREATE INDEX IF NOT EXISTS idx_emails_account_id ON emails(account_id)`);
+    // Covers the exact filter queries in routes.js
+    await client.query(`CREATE INDEX IF NOT EXISTS idx_emails_spam_date_cover ON emails(account_id, is_spam, date DESC NULLS LAST)`);
+    // Speeds up search queries (trigram index for ILIKE)
+    await client.query(`CREATE EXTENSION IF NOT EXISTS pg_trgm`);
+    await client.query(`CREATE INDEX IF NOT EXISTS idx_emails_subject_trgm ON emails USING gin(subject gin_trgm_ops)`);
+    await client.query(`CREATE INDEX IF NOT EXISTS idx_emails_sender_trgm ON emails USING gin(sender_name gin_trgm_ops)`);
 
     console.log('[DB] Tables and indexes ready');
-
-    // Auto-cleanup: keep only latest 20 per account per folder
-    await autoCleanup(client);
   } finally {
     client.release();
   }
 }
 
-async function autoCleanup(client) {
+// Called after each poll — not on every startup
+async function autoCleanup() {
+  const client = await pool.connect();
   try {
     const { rowCount } = await client.query(`
       DELETE FROM emails
@@ -76,7 +82,9 @@ async function autoCleanup(client) {
     if (rowCount > 0) console.log(`[DB] Cleanup: removed ${rowCount} old emails`);
   } catch (err) {
     console.error('[DB] Cleanup error:', err.message);
+  } finally {
+    client.release();
   }
 }
 
-module.exports = { pool, initDB };
+module.exports = { pool, initDB, autoCleanup };
