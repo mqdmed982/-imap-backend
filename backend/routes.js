@@ -5,6 +5,7 @@ const router = express.Router();
 
 router.get('/accounts', async (req, res) => {
   try {
+    res.set('Cache-Control', 'public, max-age=30');
     const { rows } = await pool.query(
       `SELECT id, name, email, host, port, created_at FROM accounts ORDER BY created_at ASC`
     );
@@ -14,70 +15,85 @@ router.get('/accounts', async (req, res) => {
   }
 });
 
+// Optimized: single JOIN query instead of N+1 per-account loop
 router.get('/emails', async (req, res) => {
   try {
     const { filter, search } = req.query;
+    const isSpamFilter = filter === 'spam' ? true : filter === 'inbox' ? false : null;
     const searchParam = search ? `%${search}%` : null;
-    const limit = 15; // per category per account
+    const limit = 15;
 
-    const { rows: accounts } = await pool.query(
-      `SELECT id, name, email FROM accounts ORDER BY created_at ASC`
-    );
+    // Build dynamic WHERE clauses
+    const conditions = [];
+    const params = [];
+    let idx = 1;
 
-    const result = [];
-    for (const acc of accounts) {
-      let emails = [];
-      const searchClause = searchParam
-        ? `AND (e.subject ILIKE $2 OR e.sender_name ILIKE $2 OR e.sender_address ILIKE $2)`
-        : '';
+    if (isSpamFilter !== null) {
+      conditions.push(`e.is_spam = $${idx++}`);
+      params.push(isSpamFilter);
+    }
 
-      if (!filter || filter === 'all') {
-        const [inboxRows, spamRows] = await Promise.all([
-          pool.query(
-            `SELECT e.id, e.sender_name, e.sender_address, e.subject, e.date, e.folder, e.is_spam, e.labels, e.fetched_at
-             FROM emails e
-             WHERE e.is_spam = FALSE AND e.account_id = $1 ${searchClause}
-             ORDER BY e.date DESC NULLS LAST LIMIT ${limit}`,
-            searchParam ? [acc.id, searchParam] : [acc.id]
-          ),
-          pool.query(
-            `SELECT e.id, e.sender_name, e.sender_address, e.subject, e.date, e.folder, e.is_spam, e.labels, e.fetched_at
-             FROM emails e
-             WHERE e.is_spam = TRUE AND e.account_id = $1 ${searchClause}
-             ORDER BY e.date DESC NULLS LAST LIMIT ${limit}`,
-            searchParam ? [acc.id, searchParam] : [acc.id]
-          ),
-        ]);
-        emails = [...inboxRows.rows, ...spamRows.rows].sort(
-          (a, b) => new Date(b.date || b.fetched_at) - new Date(a.date || a.fetched_at)
-        );
-      } else {
-        const isSpam = filter === 'spam';
-        const { rows } = await pool.query(
-          `SELECT e.id, e.sender_name, e.sender_address, e.subject, e.date, e.folder, e.is_spam, e.labels, e.fetched_at
-           FROM emails e
-           WHERE e.is_spam = $1 AND e.account_id = $2 ${searchClause}
-           ORDER BY e.date DESC NULLS LAST LIMIT ${limit * 2}`,
-          searchParam ? [isSpam, acc.id, searchParam] : [isSpam, acc.id]
-        );
-        emails = rows;
+    if (searchParam) {
+      conditions.push(`(e.subject ILIKE $${idx} OR e.sender_name ILIKE $${idx} OR e.sender_address ILIKE $${idx})`);
+      params.push(searchParam);
+      idx++;
+    }
+
+    const whereClause = conditions.length > 0 ? `AND ${conditions.join(' AND ')}` : '';
+
+    // Single query: get top N inbox + top N spam per account using window functions
+    const { rows } = await pool.query(`
+      SELECT * FROM (
+        SELECT
+          e.id, e.sender_name, e.sender_address, e.subject,
+          e.date, e.folder, e.is_spam, e.labels, e.fetched_at,
+          a.id AS account_id, a.name AS account_name, a.email AS account_email,
+          a.created_at AS account_created_at,
+          ROW_NUMBER() OVER (
+            PARTITION BY e.account_id, e.is_spam
+            ORDER BY e.date DESC NULLS LAST
+          ) AS rn
+        FROM emails e
+        JOIN accounts a ON a.id = e.account_id
+        WHERE TRUE ${whereClause}
+      ) ranked
+      WHERE rn <= ${limit}
+      ORDER BY account_created_at ASC, is_spam ASC, date DESC NULLS LAST
+    `, params);
+
+    // Group by account in JS (O(n) — no extra DB round trips)
+    const accountMap = new Map();
+    for (const row of rows) {
+      if (!accountMap.has(row.account_id)) {
+        accountMap.set(row.account_id, {
+          account: {
+            id: row.account_id,
+            name: row.account_name,
+            email: row.account_email,
+          },
+          emails: [],
+        });
       }
-
-      result.push({
-        account: { id: acc.id, name: acc.name, email: acc.email },
-        emails: emails.map((e) => ({
-          id: e.id,
-          senderName: e.sender_name,
-          senderAddress: e.sender_address,
-          subject: e.subject,
-          date: e.date,
-          folder: e.folder,
-          isSpam: e.is_spam,
-          labels: e.labels,
-          fetchedAt: e.fetched_at,
-        })),
+      accountMap.get(row.account_id).emails.push({
+        id: row.id,
+        senderName: row.sender_name,
+        senderAddress: row.sender_address,
+        subject: row.subject,
+        date: row.date,
+        folder: row.folder,
+        isSpam: row.is_spam,
+        labels: row.labels,
+        fetchedAt: row.fetched_at,
       });
     }
+
+    // Preserve account order; include accounts with 0 emails
+    const { rows: allAccounts } = await pool.query(
+      `SELECT id, name, email FROM accounts ORDER BY created_at ASC`
+    );
+    const result = allAccounts.map(acc => (
+      accountMap.get(acc.id) || { account: { id: acc.id, name: acc.name, email: acc.email }, emails: [] }
+    ));
 
     res.json(result);
   } catch (err) {
@@ -117,27 +133,31 @@ router.get('/emails/:id', async (req, res) => {
 
 router.get('/stats', async (req, res) => {
   try {
-    const { rows } = await pool.query(`
-      SELECT
-        COUNT(*) FILTER (WHERE is_spam = FALSE) AS inbox_count,
-        COUNT(*) FILTER (WHERE is_spam = TRUE)  AS spam_count,
-        COUNT(*) AS total
-      FROM emails
-    `);
-    const { rows: byAccount } = await pool.query(`
-      SELECT a.name, a.email,
-        COUNT(*) FILTER (WHERE e.is_spam = FALSE) AS inbox,
-        COUNT(*) FILTER (WHERE e.is_spam = TRUE)  AS spam
-      FROM accounts a
-      LEFT JOIN emails e ON e.account_id = a.id
-      GROUP BY a.id, a.name, a.email
-      ORDER BY a.created_at ASC
-    `);
+    res.set('Cache-Control', 'public, max-age=15');
+    const [totals, byAccount] = await Promise.all([
+      pool.query(`
+        SELECT
+          COUNT(*) FILTER (WHERE is_spam = FALSE) AS inbox_count,
+          COUNT(*) FILTER (WHERE is_spam = TRUE)  AS spam_count,
+          COUNT(*) AS total
+        FROM emails
+      `),
+      pool.query(`
+        SELECT a.name, a.email,
+          COUNT(*) FILTER (WHERE e.is_spam = FALSE) AS inbox,
+          COUNT(*) FILTER (WHERE e.is_spam = TRUE)  AS spam
+        FROM accounts a
+        LEFT JOIN emails e ON e.account_id = a.id
+        GROUP BY a.id, a.name, a.email
+        ORDER BY a.created_at ASC
+      `),
+    ]);
+
     res.json({
-      total: parseInt(rows[0].total),
-      inboxCount: parseInt(rows[0].inbox_count),
-      spamCount: parseInt(rows[0].spam_count),
-      byAccount: byAccount.map((r) => ({
+      total: parseInt(totals.rows[0].total),
+      inboxCount: parseInt(totals.rows[0].inbox_count),
+      spamCount: parseInt(totals.rows[0].spam_count),
+      byAccount: byAccount.rows.map((r) => ({
         name: r.name, email: r.email,
         inbox: parseInt(r.inbox), spam: parseInt(r.spam),
       })),
@@ -172,7 +192,6 @@ router.delete('/emails/:id', async (req, res) => {
   }
 });
 
-// DELETE /api/accounts/:id — remove account + all its emails
 router.delete('/accounts/:id', async (req, res) => {
   try {
     await pool.query('DELETE FROM accounts WHERE id = $1', [req.params.id]);
@@ -182,7 +201,6 @@ router.delete('/accounts/:id', async (req, res) => {
   }
 });
 
-// POST /api/cleanup — delete old emails beyond latest 20 per account per folder
 router.post('/cleanup', async (req, res) => {
   try {
     const { rowCount } = await pool.query(`
